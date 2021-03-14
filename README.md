@@ -5,9 +5,9 @@ First pure-python autoclicker that requires holding left click
 This project is not made by professionals. It is absolutely **not guaranteed** to bypass screenshares or serverside anticheats
 
 ## Usage
-In order to use the script, you will need:```
+In order to use the script, you will need:
     - Python 3.X
-    - Pynput (Win32 API)```
+    - Pynput (Win32 API)
 
 Once you have installed Python, open cmd and run the following command:
 `pip3 install pynput` or `pip install pynput`
