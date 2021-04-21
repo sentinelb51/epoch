@@ -1,86 +1,102 @@
-from threading import Thread
 from os import system
-from random import getrandbits, uniform
+from random import getrandbits, uniform, randint
+from threading import Thread
 from time import sleep
+from statistics import stdev, mean
 
 from pynput.keyboard import KeyCode
 from pynput.keyboard import Listener as kb_listener
 from pynput.mouse import Button, Controller
 from pynput.mouse import Listener as ms_listener
 
-system("mode 40,5")
-system("title \u200b")
-print()
-user_cps = None
-while not user_cps:
-    try:
-        user_cps = float(input(" CPS: "))
-    except ValueError:
-        print(" Invalid input provided")
-print(" Press [ to exit and ] to toggle")
 
-toggle = KeyCode(char=']')
-exit_key = KeyCode(char='[')
+def introduction():
+    system("cls")
+    system("mode 30,5")
+    system("title \u200b")
+    user_cps = None
+    while not user_cps:
+        print()
+        print("Epoch".center(30))
+        try:
+            user_cps = float(input(" CPS: "))
 
-cps = 1 / user_cps * 850
-
-
-def wrapper():
-    minimum = 1.25
-    maximum = 1.0
-
-    def compile_pattern(min_delay, max_delay, seq):
-        if seq % 20 == 0:
-            if getrandbits(1):
-                min_delay, max_delay = 0.5, 1.0
-                jitter = 0
-            else:
-                jitter = getrandbits(8)
-        elif seq % 50 == 0:
-            if getrandbits(1):
-                jitter = getrandbits(9)
-            else:
-                min_delay, max_delay = 0.5, 0.7
-                jitter = 0
+            toggle_key = KeyCode(char=input(" Toggle key: "))
+            exit_key = KeyCode(char=input(" Exit key: "))
+        except ValueError:
+            print(" Invalid input provided")
         else:
-            jitter = getrandbits(5)
+            return (1 / user_cps * 1000), toggle_key, exit_key, user_cps
 
-        delay = cps * uniform(min_delay, max_delay)
-        delay += jitter
 
-        return delay / 2000
+cps, toggle, close, raw_cps = introduction()
 
+
+def get_randomisation():
     delays = []
 
-    falling_edge = True
-    for sequence in range(1250):
-        delays.append(compile_pattern(minimum, maximum, sequence))
-        maximum += uniform(0.0007, 0.0016)
-        if falling_edge:
-            if minimum > 0.65:
-                if sequence < user_cps:
-                    minimum -= uniform(0.009, 0.015)
-                else:
-                    minimum -= uniform(0.0005, 0.0015)
-            else:
-                falling_edge = False
-                maximum = 1.0
+    def get_delay(seq, minimum, maximum, force_min=False, force_max=False):
+
+        if force_max:
+            base = cps * maximum
+        elif force_min:
+            base = cps * minimum
         else:
-            minimum += uniform(0.001, 0.005)
+            base = cps * uniform(minimum, maximum)
 
-            if minimum > 1.4:
-                falling_edge = True
+        if seq % randint(20, 40) == 0:
+            noise = getrandbits(9)
 
+        elif seq % randint(2, 15) == 0:
+            noise = getrandbits(8)
+        else:
+            noise = getrandbits(5) + getrandbits(4)
+
+        delay = base + noise
+        if sequence < raw_cps:
+            return delay / 2500
+        return delay / 3000
+
+    max_minimum = uniform(1.1, 1.6)
+    min_minimum = uniform(0.6, 0.78)
+    minimum = 1.5
+    maximum = 1.2
+    rise = False
+
+    for sequence in range(750):
+        drop_chance = uniform(0.0, 1.0)
+        spike_chance = uniform(0.0, 1.0)
+
+        if rise:
+            minimum += uniform(0.0002, 0.0015)
+        else:
+            minimum -= uniform(0.002, 0.03)
+
+        maximum += uniform(0.0003, 0.001)
+
+        if minimum >= max_minimum:
+            rise = False
+        elif minimum < min_minimum:
+            rise = True
+
+        # print(minimum, maximum, spike_chance, drop_chance)
+        real = get_delay(sequence, minimum, maximum,
+                         force_min=True if spike_chance > uniform(0.84, 0.99) else False,
+                         force_max=True if drop_chance > uniform(0.8, 0.99) else False
+                         )
+        delays.append(real)
+    print(f"Std dev: {stdev(delays)}, Mean: {mean(delays)}")
     return tuple(delays)
+
 
 class Epoch(Thread):
     def __init__(self):
-        super(Epoch, self).__init__()
+        super().__init__()
         self.button = Button.left
         self.toggleable = False
         self.running = True
         self.held = False
-        self.pattern = wrapper()
+        self.pattern = get_randomisation()
 
     def exit(self):
         self.running = False
@@ -96,9 +112,9 @@ class Epoch(Thread):
             self.toggleable = not self.toggleable
 
             if not self.toggleable:
-                self.pattern = wrapper()
+                self.pattern = get_randomisation()
 
-        elif key == exit_key:
+        elif key == close:
             self.exit()
 
     def run(self):
@@ -106,7 +122,7 @@ class Epoch(Thread):
             for x in self.pattern:
                 sleep(x)
                 if not self.held:
-                    sleep(0.4)
+                    sleep(0.25)
                     break
 
                 mouse.press(self.button)
@@ -114,11 +130,10 @@ class Epoch(Thread):
                 mouse.release(self.button)
 
 
-mouse = Controller()
 click_thread = Epoch()
+mouse = Controller()
 mouse_handler = ms_listener(on_click=click_thread.on_click)
 keyboard_handler = kb_listener(on_press=click_thread.on_press)
-
 
 click_thread.start()
 mouse_handler.start()
