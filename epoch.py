@@ -2,7 +2,6 @@ from os import system
 from random import getrandbits, uniform, randint
 from threading import Thread
 from time import sleep
-from statistics import stdev, mean
 
 from pynput.keyboard import KeyCode
 from pynput.keyboard import Listener as kb_listener
@@ -54,11 +53,15 @@ def get_randomisation():
 
         delay = base + noise
         if sequence < raw_cps:
-            return delay / 2500
+            return delay / randint(2700, 3000)
+
+        elif sequence % raw_cps == 0:
+            return delay / 4000
+        
         return delay / 3000
 
     max_minimum = uniform(1.1, 1.6)
-    min_minimum = uniform(0.6, 0.78)
+    min_minimum = uniform(0.3, 0.78)
     minimum = 1.5
     maximum = 1.2
     rise = False
@@ -85,7 +88,6 @@ def get_randomisation():
                          force_max=True if drop_chance > uniform(0.8, 0.99) else False
                          )
         delays.append(real)
-    print(f"Std dev: {stdev(delays)}, Mean: {mean(delays)}")
     return tuple(delays)
 
 
@@ -113,6 +115,7 @@ class Epoch(Thread):
 
             if not self.toggleable:
                 self.pattern = get_randomisation()
+                
 
         elif key == close:
             self.exit()
@@ -120,7 +123,6 @@ class Epoch(Thread):
     def run(self):
         while self.running:
             for x in self.pattern:
-                sleep(x)
                 if not self.held:
                     sleep(0.25)
                     break
@@ -128,6 +130,7 @@ class Epoch(Thread):
                 mouse.press(self.button)
                 sleep(x)
                 mouse.release(self.button)
+                sleep(x)
 
 
 click_thread = Epoch()
