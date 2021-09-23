@@ -1,22 +1,27 @@
 from os import system
-from random import getrandbits, uniform, randint
+from random import getrandbits, uniform, randint, choice
 from threading import Thread
 from time import sleep
 
 from pynput.keyboard import KeyCode
-from pynput.keyboard import Listener as kb_listener
+from pynput.keyboard import Listener as KeyboardListener
 from pynput.mouse import Button, Controller
-from pynput.mouse import Listener as ms_listener
+from pynput.mouse import Listener as MouseListener
+from ctypes import windll, WinDLL
+
+kernel32 = windll.kernel32
+WinMM = WinDLL("winmm")
+WinMM.timeBeginPeriod(15)
+kernel32.SetThreadPriority(kernel32.GetCurrentThread(), 31)
 
 
 def introduction():
     system("cls")
-    system("mode 30,5")
+    system("mode 36,6")
     system("title \u200b")
     user_cps = None
     while not user_cps:
-        print()
-        print("Epoch".center(30))
+        print("\n--- Epoch ---\n".center(36))
         try:
             user_cps = float(input(" CPS: "))
 
@@ -25,70 +30,50 @@ def introduction():
         except ValueError:
             print(" Invalid input provided")
         else:
-            return (1 / user_cps * 1000), toggle_key, exit_key, user_cps
+            return (0.5 / user_cps * 750), toggle_key, exit_key, int(user_cps)
 
 
 cps, toggle, close, raw_cps = introduction()
 
 
-def get_randomisation():
-    delays = []
+def get_randomisation(base):
+    randomisation = []
 
-    def get_delay(seq, minimum, maximum, force_min=False, force_max=False):
+    def get_delay(base_delay, high=False, low=False):
 
-        if force_max:
-            base = cps * maximum
-        elif force_min:
-            base = cps * minimum
+        if iteration % choice((50, 80, 100)) == 0:
+            return (base_delay * uniform(1.3, 2.6)) / 1000
+
+        if high:
+            return base_delay * uniform(uniform(1.0, 1.3), uniform(1.2, 1.6)) / 1000
+        elif low:
+            return base_delay * uniform(uniform(0.82, 0.86), uniform(0.88, 0.97)) / 1000
         else:
-            base = cps * uniform(minimum, maximum)
+            return (base_delay + getrandbits(6)) / randint(1000, 1350)
 
-        if seq % randint(20, 40) == 0:
-            noise = getrandbits(9)
+    fatigue = 0
 
-        elif seq % randint(2, 15) == 0:
-            noise = getrandbits(8)
+    for iteration in range(2750):
+
+        if fatigue > 0:
+            randomisation.append(get_delay(base, high=True))
+            fatigue -= 1
+        elif fatigue < 0:
+            randomisation.append(get_delay(base, low=True))
+            fatigue += 1
         else:
-            noise = getrandbits(5) + getrandbits(4)
+            if iteration % raw_cps == 0:
+                if getrandbits(1):
+                    fatigue += randint(randint(1, 3), randint(3, raw_cps))
+                else:
+                    fatigue -= randint(randint(2, 4), randint(9, raw_cps))
 
-        delay = base + noise
-        if sequence < raw_cps:
-            return delay / randint(2700, 3000)
+            if getrandbits(1):
+                randomisation.append(get_delay(base * uniform(0.86, 0.94)))
+            else:
+                randomisation.append(get_delay(base * uniform(1.05, 1.25)))
 
-        elif sequence % raw_cps == 0:
-            return delay / 4000
-        
-        return delay / 3000
-
-    max_minimum = uniform(1.1, 1.6)
-    min_minimum = uniform(0.3, 0.78)
-    minimum = 1.5
-    maximum = 1.2
-    rise = False
-
-    for sequence in range(750):
-        drop_chance = uniform(0.0, 1.0)
-        spike_chance = uniform(0.0, 1.0)
-
-        if rise:
-            minimum += uniform(0.0002, 0.0015)
-        else:
-            minimum -= uniform(0.002, 0.03)
-
-        maximum += uniform(0.0003, 0.001)
-
-        if minimum >= max_minimum:
-            rise = False
-        elif minimum < min_minimum:
-            rise = True
-
-        # print(minimum, maximum, spike_chance, drop_chance)
-        real = get_delay(sequence, minimum, maximum,
-                         force_min=True if spike_chance > uniform(0.84, 0.99) else False,
-                         force_max=True if drop_chance > uniform(0.8, 0.99) else False
-                         )
-        delays.append(real)
-    return tuple(delays)
+    return randomisation
 
 
 class Epoch(Thread):
@@ -98,13 +83,13 @@ class Epoch(Thread):
         self.toggleable = False
         self.running = True
         self.held = False
-        self.pattern = get_randomisation()
+        self.pattern = get_randomisation(cps)
 
     def exit(self):
         self.running = False
 
     def on_click(self, _, __, button, ___):
-        if button == self.button and self.toggleable:
+        if self.toggleable and button == self.button:
             self.held = not self.held
 
     def on_press(self, key):
@@ -114,8 +99,7 @@ class Epoch(Thread):
             self.toggleable = not self.toggleable
 
             if not self.toggleable:
-                self.pattern = get_randomisation()
-                
+                self.pattern = get_randomisation(cps)
 
         elif key == close:
             self.exit()
@@ -124,7 +108,7 @@ class Epoch(Thread):
         while self.running:
             for x in self.pattern:
                 if not self.held:
-                    sleep(0.25)
+                    sleep(0.15)
                     break
 
                 mouse.press(self.button)
@@ -135,8 +119,8 @@ class Epoch(Thread):
 
 click_thread = Epoch()
 mouse = Controller()
-mouse_handler = ms_listener(on_click=click_thread.on_click)
-keyboard_handler = kb_listener(on_press=click_thread.on_press)
+mouse_handler = MouseListener(on_click=click_thread.on_click)
+keyboard_handler = KeyboardListener(on_press=click_thread.on_press)
 
 click_thread.start()
 mouse_handler.start()
