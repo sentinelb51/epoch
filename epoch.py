@@ -11,6 +11,8 @@ from pynput.keyboard import Listener as KeyboardListener
 from pynput.mouse import Button, Controller
 from pynput.mouse import Listener as MouseListener
 
+# todo: consider ditching pynput
+
 class CURSORINFO(ctypes.Structure):
     _fields_ = [
         ("cbSize", wintypes.DWORD),
@@ -177,21 +179,13 @@ class Epoch(Thread):
             else:
                 sleep(0.1)
 
-def main():
-    setup_timer_priority()
-    configure_console()
-    delay_ms, toggle_key, exit_key, raw_cps, inventory_mode = request_user_settings()
-
-    click_thread = Epoch(delay_ms, toggle_key, exit_key, raw_cps, inventory_mode)
-    mouse_handler = MouseListener(on_click=click_thread.on_click)
-    keyboard_handler = KeyboardListener(on_press=click_thread.on_press)
-
-    click_thread.start()
-    mouse_handler.start()
-    keyboard_handler.start()
-
-    click_thread.join()
-
-
-if __name__ == "__main__":
-    main()
+setup_timer_priority()
+configure_console()
+delay_ms, toggle_key, exit_key, raw_cps, inventory_mode = request_user_settings()
+click_thread = Epoch(delay_ms, toggle_key, exit_key, raw_cps, inventory_mode)
+mouse_handler = MouseListener(on_click=click_thread.on_click)
+keyboard_handler = KeyboardListener(on_press=click_thread.on_press)
+click_thread.start()
+mouse_handler.start()
+keyboard_handler.start()
+click_thread.join()
