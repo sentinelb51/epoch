@@ -1,7 +1,8 @@
+import ctypes
 import time
-from ctypes import windll, WinDLL
+from ctypes import WinDLL, wintypes
 from os import system
-from random import getrandbits, uniform, randint, choice
+from random import choice, getrandbits, randint, uniform
 from threading import Thread
 from time import sleep
 
@@ -10,122 +11,140 @@ from pynput.keyboard import Listener as KeyboardListener
 from pynput.mouse import Button, Controller
 from pynput.mouse import Listener as MouseListener
 
-kernel32 = windll.kernel32
-WinMM = WinDLL("winmm")
-WinMM.timeBeginPeriod(15)
-kernel32.SetThreadPriority(kernel32.GetCurrentThread(), 31)
-
-logo: str = """\n
- ██████  ██████  ██████  ██████  █▓   ░█
- █▓░░░░  █▓░░░█  █░░░░█  █░░░░░  █▓   ░█
- ██████  █████░  █▓  ░█  █▓      ███████
- █▓      █▓      █▓  ░█  █▓      █▓   ░█
- ██████  █▓      ██████  ██████  █▓   ░█
- \n""".center(43)
-
-closing: str = """\n
-██████  ██████  ██████  ██████  █▓   ░█
-  █▓░░░░  █▓░░░█  █░░░░█  █░░░░░  █▓   ░█
-██████  █████░  █▓  ░█  █▓      ███████
-  █▓      █▓      █▓  ░█  █▓      █▓   ░█
-██████  █▓      ██████  ██████  █▓   ░█
- \n""".center(43)
+class CURSORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hCursor", wintypes.HANDLE),
+        ("ptScreenPos", wintypes.POINT),
+    ]
 
 
-def introduction():
+CURSOR_SHOWING = 0x00000001
+USER32 = ctypes.WinDLL("user32", use_last_error=True)
+
+CONSOLE_WIDTH = 44
+CONSOLE_HEIGHT = 14
+
+logo = """\n
+ █████▓  ██████  ██████▓  █████▓  ██▓  ░██
+ █▓░░░░  █▓░░░█░░█▓  ░█▓  █▓░░░░  ██▓  ░██
+  ███▓   ██████ ░░░░░░░░░ █▓       ███████
+ █▓   ░░░█▓      █▓░ ░█▓░░█▓   ░░░██▓ ░░██
+ █████▓  █▓░░░░  ██████▓  █████▓  ██▓  ░██
+ \n""".center(CONSOLE_WIDTH)
+
+def clear() -> None:
     system("cls")
-    system("mode 43,11")
+
+def setup_timer_priority() -> None:
+    winmm = WinDLL("winmm")
+
+    if winmm.timeBeginPeriod(1) != 0:
+        exit("timeBeginPeriod failed")
+
+
+def configure_console() -> None:
+    clear()
+    system(f"mode {CONSOLE_WIDTH},{CONSOLE_HEIGHT}")
     system("title \u200b")
-    user_cps = None
-    while not user_cps:
+
+
+def request_user_settings():
+    while True:
+        clear()
         print(logo)
         try:
-            user_cps = float(input(" [CPS] _ "))
-            toggle_key = KeyCode(char=input(" [TOGGLE-KEY] _ "))
-            exit_key = KeyCode(char=input(" [EXIT-KEY] _ "))
+            user_cps = int(input(" [CPS] _ "))
+            toggle_key = KeyCode(char=input(" [TOGGLE KEY] _ "))
+            exit_key = KeyCode(char=input(" [EXIT KEY] _ "))
+            inventory_mode = bool(int(input(" [INVENTORY MODE] (1/0) _ ")))
         except ValueError:
             print(" Invalid input provided")
+            continue
+
+        # 0.5 to get half-click delay, 1000 to convert to milliseconds
+        base_delay_ms = 0.5 / user_cps * 1000
+        return base_delay_ms, toggle_key, exit_key, user_cps, inventory_mode
+
+def is_cursor_visible() -> bool:
+    ci = CURSORINFO()
+    ci.cbSize = ctypes.sizeof(CURSORINFO)
+    if not USER32.GetCursorInfo(ctypes.byref(ci)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return bool(ci.flags & CURSOR_SHOWING)
+
+def get_delay(iteration: int, base_delay: float, *, high_delay=False, low_delay=False) -> float:
+    if iteration % choice((50, 80, 100, 120)) == 0:
+        return (base_delay + getrandbits(7)) / randint(1000, 1200)
+
+    if high_delay:
+        return base_delay * uniform(uniform(1.00, 1.09), uniform(1.1, 1.35)) / 1000
+
+    if low_delay:
+        return base_delay * uniform(uniform(0.68, 0.77), uniform(0.79, 0.99)) / 1000
+
+    base = base_delay + getrandbits(4)
+    denominator = randint(900, 1000) if getrandbits(1) else randint(1000, 1100)
+    return base / denominator
+
+
+def random_delay_pattern(base_delay_ms: float, raw_cps: int):
+    balance = 0  # Positive balance = lower CPS; negative balance = higher CPS
+    iteration = 0
+
+    while True:
+        # print("balance:", balance, "iteration:", iteration)
+        if balance > 0:
+            delay = get_delay(iteration, base_delay_ms, high_delay=True)
+            balance -= 1
+        elif balance < 0:
+            delay = get_delay(iteration, base_delay_ms, low_delay=True)
+            balance += 1
         else:
-            return 0.5 / user_cps * 1000, toggle_key, exit_key, int(user_cps)
-
-
-cps, toggle, close, raw_cps = introduction()
-
-
-def get_randomisation(base):
-    randomisation = []
-
-    def get_delay(base_delay, high=False, low=False) -> float:
-
-        if iteration % choice((50, 80, 100, 120)) == 0:
-            return (base_delay + getrandbits(7)) / randint(1000, 1200)
-        elif high:
-            return base_delay * uniform(uniform(1.15, 1.2), uniform(1.2, 1.72)) / 1000
-        elif low:
-            return base_delay * uniform(uniform(0.65, 0.75), uniform(0.7, 0.97)) / 1000
-        else:
-            if getrandbits(1):
-                return (base_delay + getrandbits(4)) / randint(900, 1000)
-            else:
-                return (base_delay + getrandbits(4)) / randint(1000, 1100)
-
-    fatigue = 0
-
-    for iteration in range(1250):
-
-        if fatigue > 0:
-            randomisation.append(get_delay(base, high=True))
-            fatigue -= 1
-        elif fatigue < 0:
-            randomisation.append(get_delay(base, low=True))
-            fatigue += 1
-        else:
-            if iteration % raw_cps == 0:
+            if raw_cps and iteration % raw_cps == 0:
                 if getrandbits(1):
-                    fatigue += randint(randint(3, 8), randint(8, raw_cps))
+                    balance += randint(randint(3, raw_cps), randint(raw_cps, raw_cps * 5))
                 else:
-                    fatigue -= randint(randint(4, 6), randint(6, raw_cps))
+                    balance -= randint(randint(4, raw_cps), randint(raw_cps, raw_cps * 2))
 
-            if getrandbits(1):
-                randomisation.append(get_delay(base * uniform(0.9, 1.00)))
-            else:
-                randomisation.append(get_delay(base * uniform(1.00, 1.1)))
+            base = base_delay_ms * uniform(0.9, 1.0) if getrandbits(1) else base_delay_ms * uniform(1.0, 1.1)
+            delay = get_delay(iteration, base)
 
-    return (x for x in randomisation)
-
+        iteration += 1
+        yield delay
 
 class Epoch(Thread):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, delay_ms: float, toggle_key: str, exit_key: str, raw_cps: int, inventory_mode: bool):
+        super().__init__(daemon=True)
         self.mouse = Controller()
-        self.button = Button.left
-        self.toggleable = False
         self.running = True
+        self.button = Button.left
+        self.inventory_mode = inventory_mode
+        self.raw_cps = raw_cps
+        self.toggleable = False
         self.held = False
-        self.pattern = get_randomisation(cps)
+        self.pattern_generator = random_delay_pattern(delay_ms, raw_cps)
         self.cycles = 0
-
-        self.keymap = {
-            toggle: self.toggle,
-            close: self.exit
+        self.keybinds = {
+            toggle_key: self.toggle,
+            exit_key: self.exit_app,
         }
 
     def regenerate(self):
-        if self.cycles % 2 == 0:
-            offset = 0.5 / (raw_cps * uniform(1.075, 1.175)) * 1000
-        else:
-            offset = 0.5 / (raw_cps * uniform(0.95, 1.05)) * 1000
-
-        self.pattern = get_randomisation(offset)
+        # multiplier = uniform(1.075, 1.175) if self.cycles % 2 == 0 else uniform(0.95, 1.05)  # maybe don't do this
+        multiplier = 1
+        offset = 0.5 / (self.raw_cps * multiplier) * 1000
+        self.pattern_generator = random_delay_pattern(offset, self.raw_cps)
         self.cycles += 1
 
-    def exit(self):
+    def exit_app(self):
+        time.sleep(5)
+        clear()
+        print(logo.replace("█", "▓").center(CONSOLE_WIDTH))
+        time.sleep(0.6)
+        clear()
         self.running = False
-        system("cls")
-        print(closing)
-        time.sleep(0.4)
-        system("cls")
-        exit(0)
 
     def toggle(self):
         self.held = False
@@ -139,30 +158,40 @@ class Epoch(Thread):
             self.held = not self.held
 
     def on_press(self, key):
-        action = self.keymap.get(key, None)
-        if action:
+        if action := self.keybinds.get(key):
             action()
 
     def run(self):
         while self.running:
-            while self.held:
-                try:
-                    delay = self.pattern.__next__()
-                except StopIteration:
-                    self.regenerate()
-                    delay = self.pattern.__next__()
 
+            if self.inventory_mode and is_cursor_visible():
+                sleep(0.1)
+                continue
+
+            if self.held:
+                delay = next(self.pattern_generator)
                 self.mouse.press(self.button)
                 sleep(delay)
                 self.mouse.release(self.button)
                 sleep(delay)
-            sleep(0.1)
+            else:
+                sleep(0.1)
+
+def main():
+    setup_timer_priority()
+    configure_console()
+    delay_ms, toggle_key, exit_key, raw_cps, inventory_mode = request_user_settings()
+
+    click_thread = Epoch(delay_ms, toggle_key, exit_key, raw_cps, inventory_mode)
+    mouse_handler = MouseListener(on_click=click_thread.on_click)
+    keyboard_handler = KeyboardListener(on_press=click_thread.on_press)
+
+    click_thread.start()
+    mouse_handler.start()
+    keyboard_handler.start()
+
+    click_thread.join()
 
 
-click_thread = Epoch()
-mouse_handler = MouseListener(on_click=click_thread.on_click)
-keyboard_handler = KeyboardListener(on_press=click_thread.on_press)
-
-click_thread.start()
-mouse_handler.start()
-keyboard_handler.start()
+if __name__ == "__main__":
+    main()
